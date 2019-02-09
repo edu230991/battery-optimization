@@ -12,4 +12,5 @@ The folling iterations can be done starting from here:
 * a call probability is assigned that decreases with increasing absolute values of price increase or discount. E.g. there is a lower chance of being called and therefore realizing a revenue if bid price is low or offer price is high.
 * the volume that can be accepted by the TSO varies with the price level, according to a price curve
 * optimization is done multi-stage to account for time lag in auctions
+* cost of cycling the battery is included in the optimization, for example as a function of state of charge
 * etc.
