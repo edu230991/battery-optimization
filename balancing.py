@@ -10,32 +10,39 @@ BATTERY_ENERGY = 10
 EFFICIENCY = .85
 MAX_CYCLES = 400
 
+soc_scenarios = 1
+price_scenarios = 100
+
+initial_soc = np.linspace(BATTERY_ENERGY*.1, BATTERY_ENERGY*.9, soc_scenarios)
+probability = -(initial_soc-.5*BATTERY_ENERGY)**2 + (initial_soc[0] - .5*BATTERY_ENERGY)**2*1.1
+probability = probability/probability.sum()
+
 start = pd.to_datetime('2018-01-01')
-end = pd.to_datetime('2019-01-01')
+end = pd.to_datetime('2018-02-01')
 time_range = pd.date_range(start=start, end=end, freq='30min')
 
 pd.np.random.seed(0)
 min_bid_price = cvx.Parameter(
     name='min_bid_pri', 
-    value=np.random.randn(len(time_range))*10 + 35,
-    shape=len(time_range),
+    value=np.random.randn(len(time_range), price_scenarios)*10 + 35,
+    shape=(len(time_range), price_scenarios),
 )
 max_offer_price = cvx.Parameter(
     name='max_off_pri',
-    value=np.random.randn(len(time_range))*10 + 120,
-    shape=len(time_range),
+    value=np.random.randn(len(time_range), price_scenarios)*10 + 120,
+    shape=(len(time_range), price_scenarios),
 )
-
-bid_price = min_bid_price+10
-offer_price = max_offer_price-10
 
 # bid_price = cvx.Variable(len(time_range), name='bid_pri')
 # offer_price = cvx.Variable(len(time_range), name='off_pri')
 
-bid_volume = cvx.Variable(len(time_range), name='bid_vol')
-offer_volume = cvx.Variable(len(time_range), name='off_vol')
+bid_volume = cvx.Variable((len(time_range), soc_scenarios), name='bid_vol')
+offer_volume = cvx.Variable((len(time_range), soc_scenarios), name='off_vol')
 
-soc = cvx.Variable(len(time_range)+1, name='off_pri')
+bought_volume = cvx.Variable((len(time_range), soc_scenarios), name='bid_vol')
+sold_volume = cvx.Variable((len(time_range), soc_scenarios), name='off_vol')
+
+soc = cvx.Variable((len(time_range)+1, soc_scenarios), name='off_pri')
 
 battery_cycles = cvx.sum(offer_volume)/BATTERY_ENERGY
 
@@ -45,14 +52,23 @@ constraints = [
     soc >=0, 
     bid_volume <=BATTERY_POWER/2,
     offer_volume <=BATTERY_ENERGY/2,    
-    soc[0] == soc[-1], 
+    soc[0] == initial_soc, 
     soc[1:] == soc[:-1] + bid_volume*EFFICIENCY**.5 - offer_volume/EFFICIENCY**.5,
     soc <= BATTERY_ENERGY,
     battery_cycles <= MAX_CYCLES/365*len(time_range)/48,
 ]
+constraints += [bid_volume[:, i-1] == bid_volume[:, i] 
+    for i in range(1, bid_volume.shape[1])]
+constraints += [offer_volume[:, i-1] == offer_volume[:, i] 
+    for i in range(1, offer_volume.shape[1])]
 
 objective_fun = cvx.Maximize(
-    cvx.sum(-bid_price*bid_volume +offer_price*offer_volume)
+    cvx.sum(cvx.multiply(
+        probability,
+        cvx.sum(
+            -cvx.multiply(bid_price, bid_volume) + 
+            cvx.multiply(offer_price, offer_volume), axis=0)
+    ))
 )
 
 problem = cvx.Problem(objective_fun, constraints)
@@ -87,5 +103,5 @@ ax[0].set_ylabel('MWh')
 ax[1].plot(time_range, max_offer_price.value, label='max_offer_price')
 ax[1].plot(time_range, min_bid_price.value, label='min_bid_price')
 ax[1].set_ylabel('£/MWh')
-[a.legend(loc=1) for a in ax]
+# [a.legend(loc=1) for a in ax]
 plt.show()
