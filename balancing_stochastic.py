@@ -9,7 +9,7 @@ BATTERY_POWER = 10
 BATTERY_ENERGY = 10
 EFFICIENCY = .85
 MAX_CYCLES = 400
-RISK_METHOD = 'variance'
+RISK_METHOD = 'variance' # None
 
 soc_scenarios = 9
 price_scenarios = 500
@@ -42,6 +42,8 @@ offer_price = max_offer_price - 10
 
 bid_volume = cvx.Variable(len(time_range), name='bid_vol')
 offer_volume = cvx.Variable(len(time_range), name='off_vol')
+unreal_bid_volume = cvx.Variable((len(time_range), soc_scenarios), name='bid_vol')
+unreal_offer_volume = cvx.Variable((len(time_range), soc_scenarios), name='off_vol')
 
 soc = cvx.Variable((len(time_range)+1, soc_scenarios), name='off_pri')
 
@@ -56,19 +58,31 @@ constraints = [
     soc[0] == initial_soc, 
     soc <= BATTERY_ENERGY,
     battery_cycles <= MAX_CYCLES/365*len(time_range)/48,
+    unreal_bid_volume >= 0,
+    unreal_offer_volume >= 0,  
 ]
 for i in range(soc.shape[1]):
+    constraints += [unreal_bid_volume[:, i] <= bid_volume,
+                    unreal_offer_volume[:, i] <= offer_volume]  
     constraints += [soc[1:, i] == 
-        soc[:-1, i] + bid_volume*EFFICIENCY**.5 - 
-        offer_volume/EFFICIENCY**.5,]
+        soc[:-1, i] + (bid_volume-unreal_bid_volume[:, i])*EFFICIENCY**.5 - 
+        (offer_volume-unreal_offer_volume[:, i])/EFFICIENCY**.5,]
 
 revenue = offer_price.T*offer_volume
 cost = bid_price.T*bid_volume
 
-expected_profit = 1/price_scenarios*cvx.sum(revenue - cost)
+lost_revenue = cvx.sum(cvx.multiply(unreal_offer_volume.T*cvx.sum(
+    offer_price, axis=1)/offer_price.shape[0],
+    probability_soc))
+saved_cost = cvx.sum(cvx.multiply(unreal_bid_volume.T*cvx.sum(
+    bid_price, axis=1)/bid_price.shape[0],
+    probability_soc))
+
+expected_profit = 1/price_scenarios*cvx.sum(revenue - cost) - lost_revenue
 if RISK_METHOD == 'variance':
     risk = 1e-7*cvx.sum(cvx.power(revenue - cost, 2))
-
+elif RISK_METHOD == None:
+    risk = 0
 objective_fun = cvx.Maximize(expected_profit - risk)
 
 problem = cvx.Problem(objective_fun, constraints)
@@ -93,7 +107,7 @@ soc[soc>BATTERY_ENERGY] = BATTERY_ENERGY
 
 print('Cycles:', offer_volume.sum()/BATTERY_POWER/len(time_range)*365*48)
 print('Expected profit:', expected_profit.value)
-print('Risk:', risk.value)
+# print('Risk:', risk.value)
 
 fig, ax = plt.subplots(2, 1, sharex=True)
 ax[0].plot(time_range, soc[1:], label='state of charge')
